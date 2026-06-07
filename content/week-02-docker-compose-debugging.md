@@ -127,7 +127,7 @@ csot submit ./my-solutions
 csot submit ./my-solutions -t 03
 ```
 
-**How to solve hard tasks:** read **Module 8 — Incident Response Playbooks** in this doc. Each task has a step-by-step debugging sequence, bug checklist, and verify-before-submit commands.
+**How to solve hard tasks:** read **Module 3 — Docker Debugging Workflow** and **Module 8 — Incident Response Playbooks** in this doc. They give you the incident loop, the universal toolkit, and the "don't trust the first error line" discipline you apply to every task.
 
 Full task list and rules: **[Contest reference](#contest-reference--tasks-scoring-rules)** at the end of this doc.
 
@@ -139,8 +139,8 @@ Full task list and rules: **[Contest reference](#contest-reference--tasks-scorin
 |------|------|-----|---------|
 | Early week | Modules 0–2 | Install Docker, [Build 1](#build-1--containerize-a-single-app) | 01, 02 |
 | Mid week | Modules 3–4, 8 | [Build 2](#build-2--multi-service-compose-stack) | 03, 04 |
-| Late week | Modules 5–7, 8 playbooks | Practice fixtures | 05–09 |
-| Before Sunday | Module 8 (tasks 11–12) | Full stack locally | 10–12 |
+| Late week | Modules 5–7, 8 | Practice fixtures | 05–09 |
+| Before Sunday | Modules 3 + 8 (debugging loop) | Full stack locally | 10–12 |
 | Sunday | — | Mini-project repo | final submits |
 
 **Rule:** tasks 03–12 need the fixture tarball running on your machine. The task page shows symptoms; Module 8 shows how to debug.
@@ -684,425 +684,6 @@ docker compose down -v       # wipes volumes — only when you mean it
 
 ---
 
-### Contest ↔ Module map
-
-| Task | Title | Read first | Est. time |
-|------|-------|------------|-----------|
-| 01 | Hello Container | Module 2 | 30 min |
-| 02 | Context Leak | Module 2, 5 | 30 min |
-| 03 | The Flapping Stack | Module 3, 4, 6 | 60–90 min |
-| 04 | Misleading Redis Error | Module 3, 4 | 60 min |
-| 05 | Migration Before Ready | Module 4, 6 | 75 min |
-| 06 | Slim the Image | Module 5, 7 | 45 min |
-| 07 | Permission Rabbit Hole | Module 2, 5 | 60–90 min |
-| 08 | Data Ghost Volume | Module 4 | 60 min |
-| 09 | Exec Rescue (5 bugs) | Module 3, 8 | 60–90 min |
-| 10 | Container Doctor | Module 1, 3 | 45 min |
-| 11 | SSH: 2 AM Incident | Module 3, 4, 6, 8 | 90–120 min |
-| 12 | Full Stack Rescue | All modules | 90–120 min |
-
----
-
-### Playbook: Task 01 — Hello Container (5 pts)
-
-**Goal:** Write `01/Dockerfile` for a provided `server.py`.
-
-**Steps:**
-1. Read `server.py` — what port? what deps?
-2. `FROM python:3.12-slim`
-3. `WORKDIR /app`
-4. Copy `requirements.txt` first, `RUN pip install`, then `COPY` app code (cache-friendly).
-5. `CMD ["python", "server.py"]` — exec form, not shell form.
-6. Test locally:
-
-```bash
-docker build -t task01 .
-docker run --rm -p 8000:8000 task01
-curl http://localhost:8000/
-```
-
-**Pass criteria:** build succeeds, `GET /` returns expected JSON, slim base image.
-
----
-
-### Playbook: Task 02 — Context Leak (5 pts)
-
-**Goal:** Write `02/.dockerignore` so secrets and caches never enter the build context.
-
-**Steps:**
-1. List the fixture tree: `find . -type f | head -50`
-2. Exclude: `.env`, `.git`, `node_modules`, `.venv`, `__pycache__`, `*.log`, `.DS_Store`
-3. **Do not** exclude: `app.py`, `requirements.txt`, `package-lock.json`
-4. Verify by building and checking image contents:
-
-```bash
-docker build -t task02 .
-docker run --rm task02 find /app -type f
-```
-
-**Pass criteria:** secrets/caches absent; source files present.
-
----
-
-### Playbook: Task 03 — The Flapping Stack (10 pts) ★★★
-
-**Symptom:** `/health` always 200, `/api/users` fails ~30% of the time. Restarting `app` helps briefly.
-
-**Submit:** `03/compose.yaml` + `03/Dockerfile` if needed.
-
-**Debugging sequence:**
-
-```bash
-# 1. Reproduce flakiness
-for i in $(seq 1 30); do
-  code=$(curl -so /dev/null -w "%{http_code}" http://localhost:8000/api/users)
-  echo "$i $code"
-done
-
-# 2. Check all services
-docker compose ps
-docker compose logs app db
-
-# 3. Network — can app reach db?
-docker exec app getent hosts db
-docker network inspect $(docker network ls -q | head -1)
-
-# 4. Port mapping — host 8000 → container ???
-docker compose config | grep -A2 ports
-docker exec app ss -lntp
-
-# 5. Volume — is Postgres data actually persisting?
-docker exec db ls -la /var/lib/postgresql/data
-```
-
-**Bug checklist (fix ALL — partial fix still fails hidden checks):**
-- [ ] `depends_on` without `condition: service_healthy` → race on startup
-- [ ] `ports: "8000:80"` but app listens on 8000 inside container
-- [ ] App and DB on different networks → intermittent DNS failures
-- [ ] Volume mounted to `/var/lib/postgresql` instead of `/var/lib/postgresql/data`
-- [ ] Ignore red herring `WARN redis timeout` if Redis is healthy
-
-**Verify before submit:**
-```bash
-# Must pass 20/20 times
-for i in $(seq 1 20); do curl -sf http://localhost:8000/api/users || echo FAIL; done
-docker compose restart app
-# still works after restart
-```
-
----
-
-### Playbook: Task 04 — Misleading Redis Error (9 pts) ★★★
-
-**Symptom:** Logs scream `could not connect to redis at 127.0.0.1:6379`. Team is debugging Redis. Redis is fine.
-
-**Submit:** `04/compose.yaml` + `04/app.env` or Dockerfile patch.
-
-**Key insight:** The loudest log line is a **red herring**. Prove what is actually broken.
-
-```bash
-# Is Redis actually fine?
-docker compose ps redis
-docker exec redis redis-cli ping          # → PONG
-
-# Can app reach redis by service name?
-docker exec app getent hosts redis
-docker exec app nc -zv redis 6379
-
-# What about Postgres? (often the real problem)
-docker exec app getent hosts db
-docker exec app nc -zv db 5432
-docker compose logs app | grep -i database
-
-# Is the app even reachable from outside?
-docker exec app ss -lntp
-curl -v http://localhost:8000/api/users
-```
-
-**Bug checklist:**
-- [ ] `REDIS_HOST=127.0.0.1` — wrong, but not the only bug
-- [ ] App and `db` on different compose networks
-- [ ] `DATABASE_URL` uses `localhost` instead of `db`
-- [ ] App binds `127.0.0.1:8000` — fix `HOST=0.0.0.0`
-
-**Verify:** `curl /health` AND `curl /api/users` both succeed; `nc -zv db 5432` works from app container.
-
----
-
-### Playbook: Task 05 — Migration Before Ready (9 pts) ★★★
-
-**Symptom:** Fresh deploy fails. "Just restart app" makes it worse. `migrate` container exited with error.
-
-**Submit:** `05/compose.yaml` + optional `05/fix.sh` (reset corrupt migration state).
-
-```bash
-docker compose ps -a                      # check migrate exit code
-docker compose logs migrate
-docker compose logs db
-docker compose logs app
-
-# Is Postgres actually ready when migrate runs?
-docker inspect db | jq '.[0].State.Health'
-```
-
-**Bug checklist:**
-- [ ] `migrate` runs before Postgres accepts connections
-- [ ] No `healthcheck` on `db`
-- [ ] No `depends_on: db: condition: service_healthy` on `migrate` and `app`
-- [ ] Partial migration leaves corrupt schema — may need `docker compose down -v` once, then fix order
-
-**Correct pattern:**
-```yaml
-db:
-  healthcheck:
-    test: ["CMD-SHELL", "pg_isready -U app"]
-    interval: 5s
-    retries: 5
-
-migrate:
-  depends_on:
-    db:
-      condition: service_healthy
-
-app:
-  depends_on:
-    migrate:
-      condition: service_completed_successfully
-    db:
-      condition: service_healthy
-```
-
-**Verify:** fresh `docker compose down -v && docker compose up --build` → all healthy → `POST /api/users` → `compose down && compose up` → data persists.
-
----
-
-### Playbook: Task 06 — Slim the Image (6 pts)
-
-**Goal:** Rewrite bloated Dockerfile as multi-stage; final image < 200 MB.
-
-```bash
-docker build -t before -f Dockerfile.bloated .
-docker images before --format '{{.Size}}'
-
-# After your fix
-docker build -t after .
-docker images after --format '{{.Size}}'
-docker run --rm -p 8000:8000 after
-curl http://localhost:8000/
-```
-
-**Patterns:**
-- Builder stage: install deps, compile if needed
-- Runtime stage: `FROM python:3.12-slim` or `FROM gcr.io/distroless/...`
-- Copy only the binary/venv artifact, not source tree or build tools
-
----
-
-### Playbook: Task 07 — Permission Rabbit Hole (9 pts) ★★★
-
-**Symptom:** `Permission denied: '/app/data/state.json'` after adding non-root user.
-
-**Submit:** `07/Dockerfile` + `07/entrypoint.sh` + optional `07/compose.yaml`.
-
-```bash
-docker exec app id
-docker exec app ls -la /app /app/data
-docker inspect app | jq '.[0].Config.User'
-docker volume inspect <volname>
-```
-
-**Bug chain to unwind:**
-1. `COPY . .` leaves files owned by root
-2. Named volume mount overwrites `/app/data` with root-owned empty volume
-3. Entrypoint tries `chown` but runs as non-root → fails silently
-4. App cannot write state file
-
-**Fix pattern in Dockerfile:**
-```dockerfile
-RUN adduser --disabled-password --gecos "" appuser
-COPY --chown=appuser:appuser . .
-RUN mkdir -p /app/data && chown appuser:appuser /app/data
-USER appuser
-```
-
-**Or in entrypoint (must run as root first, then drop):**
-```bash
-#!/bin/sh
-chown -R appuser:appuser /app/data
-exec su-exec appuser "$@"
-```
-
-**Verify:** `docker exec app id` shows non-root; app creates `/app/data/state.json`.
-
----
-
-### Playbook: Task 08 — Data Ghost Volume (8 pts) ★★★
-
-**Symptom:** "We added a volume." Data still disappears after redeploy.
-
-**Submit:** `08/compose.yaml`
-
-```bash
-# Volume exists on paper?
-docker compose config | grep -A5 volumes
-
-# But is it mounted to the RIGHT path inside Postgres?
-docker inspect db | jq '.[0].Mounts'
-
-# Postgres official image REQUIRES:
-#   /var/lib/postgresql/data
-# NOT:
-#   /var/lib/postgresql
-```
-
-**Test script:**
-```bash
-docker compose up -d
-curl -X POST http://localhost:8000/api/users -d '{"name":"test"}'
-docker compose down        # NO -v
-docker compose up -d
-curl http://localhost:8000/api/users   # must still show "test"
-```
-
-**Pass criteria:** named volume declared AND mounted to `/var/lib/postgresql/data`.
-
----
-
-### Playbook: Task 09 — Exec Rescue, Five Bugs (10 pts) ★★★
-
-**Symptom:** Container running but broken inside. **Cannot rebuild image** — submit `09/fix.sh` only.
-
-**Download fixture and explore:**
-```bash
-docker run -d --name rescue csot/week2-fixture:broken-v1
-docker exec -it rescue sh
-
-# Inside container — find all five bugs:
-ls -la /app/data                    # 1. permissions
-ls -la /tmp/app.lock                # 2. stale lock
-cat /app/.runtime.env               # 3. API_MODE=dev (should be production)
-ls -la /app/config.json             # 4. broken symlink
-cat /etc/hosts                      # 5. missing internal.api alias
-```
-
-**`fix.sh` template (idempotent):**
-```bash
-#!/bin/sh
-set -e
-rm -f /tmp/app.lock
-chown -R appuser:appuser /app/data
-sed -i 's/API_MODE=dev/API_MODE=production/' /app/.runtime.env
-ln -sf /app/config.prod.json /app/config.json
-echo "127.0.0.1 internal.api" >> /etc/hosts
-# restart app process if needed, or touch a trigger file
-```
-
-**Verify locally before submit:**
-```bash
-docker cp fix.sh rescue:/tmp/fix.sh
-docker exec rescue sh /tmp/fix.sh
-curl http://localhost:<port>/health
-```
-
----
-
-### Playbook: Task 10 — Container Doctor (7 pts)
-
-**Goal:** `10.sh <image>` prints JSON metadata via `docker image inspect`.
-
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-img="${1:?usage: $0 <image>}"
-docker image inspect "$img" | jq '...[fields]...'
-```
-
-**Required fields:** `id`, `size` (bytes), `user`, `ports`, `cmd`.
-
-**Edge case:** missing image → exit code 2, message on stderr.
-
----
-
-### Playbook: Task 11 — SSH: 2 AM Incident (12 pts) ★★★★
-
-**Access:** credentials shown on contest portal after `csot login`.
-
-```bash
-ssh incident@week2-debug.csot-devops.devclub.in -p 2222
-cd ~/incident-11
-```
-
-**On-call sequence:**
-```bash
-docker compose ps -a
-docker compose logs --tail=30 worker app db
-curl -s localhost:8000/health              # ok
-curl -s localhost:8000/api/users           # 500 — real problem
-docker inspect app | jq '.[0].State.Health'
-docker network inspect incident-11_default
-docker exec app env | grep -E 'DATABASE|REDIS|CACHE'
-```
-
-**Bug checklist (6 issues — fix all):**
-- [ ] `worker` on wrong network
-- [ ] App healthcheck hits port 8080, app listens on 8000
-- [ ] `DATABASE_URL` uses `localhost`
-- [ ] Invalid `CACHE_TTL=abc` → API 500
-- [ ] Worker crash-loop left partial job state — run cleanup
-- [ ] Ignore flooded Redis errors in logs (red herring)
-
-**Submit:** copy fixed `11/compose.yaml`, `11/fix.sh`, `11/.env` from VM.
-
-```bash
-mkdir -p ~/submissions/11
-cp compose.yaml fix.sh .env ~/submissions/11/
-csot submit ~/submissions/11 -t 11
-```
-
----
-
-### Playbook: Task 12 — Full Stack Rescue (10 pts) ★★★★
-
-**Goal:** Fix entire `checkout-api` repo. Submit `12/` directory.
-
-**Recommended order of attack:**
-```text
-1. docker compose config     → parse errors first
-2. docker compose build      → Dockerfile issues
-3. docker compose up         → runtime issues
-4. curl /health              → shallow check
-5. curl /api/users           → DB connectivity
-6. curl -X POST /api/orders  → worker/async path
-7. compose down && up        → persistence
-8. docker exec app id        → non-root check
-9. docker images             → size check
-10. Write NOTES.md           → 5 root-cause/fix pairs
-```
-
-**`NOTES.md` template:**
-```markdown
-## Incident notes — Task 12
-
-### 1. API unreachable from host
-- **Symptom:** curl connection refused
-- **Command:** `docker exec app ss -lntp`
-- **Root cause:** app bound to 127.0.0.1
-- **Fix:** HOST=0.0.0.0 in compose environment
-
-### 2. ...
-```
-
-**Verify checklist before submit:**
-- [ ] `docker compose up --build` → all healthy within 120s
-- [ ] `GET /api/users` → 200
-- [ ] `POST /api/orders` → 202
-- [ ] Data survives `compose down` + `up` (no `-v`)
-- [ ] `docker exec app id` → non-root
-- [ ] Image < 250 MB
-- [ ] `NOTES.md` has ≥5 real root causes (not generic fluff)
-
----
-
 ### Practice fixtures (ship with course repo)
 
 Create `practice/` broken stacks students can run before attempting contest tasks:
@@ -1118,7 +699,7 @@ Create `practice/` broken stacks students can run before attempting contest task
 ```bash
 cd practice/01-flaky-api
 docker compose up --build
-# follow Module 8 playbook for Task 03
+# work the Module 3 / Module 8 debugging loop (Task 03)
 ```
 
 ---
@@ -1299,20 +880,20 @@ docker compose up -d
 
 🔴 = **live VM sandbox** (subject to the time penalty below). The rest are file submissions.
 
-| # | What | Submit as | Pts | Est. time | Solve guide |
-|---|------|-----------|-----|-----------|-------------|
-| 1 | Hello Container — Dockerfile for provided app | `01/Dockerfile` | 12 | 30 min | Module 8 → Task 01 |
-| 2 | Context Leak — `.dockerignore` for secrets/caches | `02/.dockerignore` | 10 | 30 min | Module 8 → Task 02 |
-| 3 | 🔴 **The Flapping Stack** — flaky API, 4+ bugs | `03/` | 14 | 60–90 min | Module 8 → Task 03 |
-| 4 | 🔴 **Misleading Redis Error** — red herring logs | `04/compose.yaml` + env | 14 | 60 min | Module 8 → Task 04 |
-| 5 | 🔴 **Migration Before Ready** — startup order + corrupt state | `05/` | 15 | 75 min | Module 8 → Task 05 |
-| 6 | Slim the Image — multi-stage, size cap | `06/Dockerfile` | 12 | 45 min | Module 8 → Task 06 |
-| 7 | 🔴 **Permission Rabbit Hole** — USER + volume + entrypoint | `07/` | 16 | 60–90 min | Module 8 → Task 07 |
-| 8 | 🔴 **Data Ghost Volume** — volume exists, wrong path | `08/compose.yaml` | 22 | 60 min | Module 8 → Task 08 |
-| 9 | 🔴 **Exec Rescue** — fix 5 bugs inside running container | `09/fix.sh` | 14 | 60–90 min | Module 8 → Task 09 |
-| 10 | Container Doctor — image inspect JSON script | `10.sh` | 14 | 45 min | Module 8 → Task 10 |
-| 11 | 🔴 **SSH: 2 AM Incident** — live VM, 6 bugs | `11/` | 24 | 90–120 min | Module 8 → Task 11 |
-| 12 | 🔴 **Full Stack Rescue** — capstone + `NOTES.md` | `12/` | 33 | 90–120 min | Module 8 → Task 12 |
+| # | What | Submit as | Pts | Est. time | Read first |
+|---|------|-----------|-----|-----------|------------|
+| 1 | Hello Container — Dockerfile for provided app | `01/Dockerfile` | 12 | 30 min | Module 2 |
+| 2 | Context Leak — `.dockerignore` for secrets/caches | `02/.dockerignore` | 10 | 30 min | Module 2, 5 |
+| 3 | 🔴 **The Flapping Stack** — flaky API, 4+ bugs | `03/` | 14 | 60–90 min | Module 3, 4, 6 |
+| 4 | 🔴 **Misleading Redis Error** — red herring logs | `04/compose.yaml` + env | 14 | 60 min | Module 3, 4 |
+| 5 | 🔴 **Migration Before Ready** — startup order + corrupt state | `05/` | 15 | 75 min | Module 4, 6 |
+| 6 | Slim the Image — multi-stage, size cap | `06/Dockerfile` | 12 | 45 min | Module 5, 7 |
+| 7 | 🔴 **Permission Rabbit Hole** — USER + volume + entrypoint | `07/` | 16 | 60–90 min | Module 2, 5 |
+| 8 | 🔴 **Data Ghost Volume** — volume exists, wrong path | `08/compose.yaml` | 22 | 60 min | Module 4 |
+| 9 | 🔴 **Exec Rescue** — fix 5 bugs inside running container | `09/fix.sh` | 14 | 60–90 min | Module 3, 8 |
+| 10 | Container Doctor — image inspect JSON script | `10.sh` | 14 | 45 min | Module 1, 3 |
+| 11 | 🔴 **SSH: 2 AM Incident** — live VM, 6 bugs | `11/` | 24 | 90–120 min | Module 3, 4, 6 |
+| 12 | 🔴 **Full Stack Rescue** — capstone + `NOTES.md` | `12/` | 33 | 90–120 min | All modules |
 
 **Total: 200 points.**
 
@@ -1343,7 +924,7 @@ Strategy: read the symptoms, plan your fix offline, then start the sandbox and w
 curl -fsSL https://csot-devops.devclub.in/week-02/fixtures/03-flapping-stack.tar.gz | tar xz
 cd 03-flapping-stack
 docker compose up --build
-# follow Module 8 playbook for that task number
+# work the Module 3 / Module 8 debugging loop
 mkdir -p ~/solutions/03 && cp compose.yaml Dockerfile ~/solutions/03/
 csot submit ~/solutions -t 03
 ```
@@ -1462,7 +1043,7 @@ Full specs: **[csot-devops.devclub.in/contest/week-02](https://csot-devops.devcl
 ### Keep open while doing the contest (quick reference)
 
 - [Dockerfile reference](https://docs.docker.com/reference/dockerfile/) · [Compose file reference](https://docs.docker.com/reference/compose-file/) · [docker CLI](https://docs.docker.com/reference/cli/docker/) · [compose CLI](https://docs.docker.com/reference/cli/docker/compose/)
-- This guide's **Module 3** (debugging loop + toolkit) and **Module 8** (per-task playbooks).
+- This guide's **Module 3** (debugging loop + toolkit) and **Module 8** (incident-response discipline).
 
 ---
 
