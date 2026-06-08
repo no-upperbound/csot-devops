@@ -1,0 +1,122 @@
+# Week 02 — Mini-Project submission guide
+
+**Project**: Dockerized App Stack (multi-service `docker compose` app)
+**Track**: 🟢 Local Track · **50 points** · manually graded
+**Deadline**: **Sunday 11:59 PM (IST)** of Week 2
+**Spec**: [content/week-02-docker-compose-debugging.md → Weekly Mini-Project](../../content/week-02-docker-compose-debugging.md#weekly-mini-project--dockerized-app-stack)
+
+> Two different things land in Week 2, **don't confuse them**:
+>
+> | | Contest (autograded) | Mini-Project (this guide) |
+> |---|---|---|
+> | **What** | 12 Docker/Compose incident tasks | Dockerized App Stack repo |
+> | **Points** | 200 | 50 |
+> | **How submitted** | `csot` CLI / `csot challenge` → [csot-devops.devclub.in](https://csot-devops.devclub.in) | [contest portal → **Mini-project submission**](https://csot-devops.devclub.in/submission) (paste repo URL) |
+> | **Grading** | Automatic, in a Docker sandbox | Manual review by mentors |
+> | **Guide** | [`/submission/README.md`](../../submission/README.md) | You're reading it |
+
+---
+
+## 1. What you're submitting
+
+A **public GitHub repository** containing a multi-service app you can bring up with a single `docker compose up --build` (everything specified under **[Weekly Mini-Project — Dockerized App Stack](../../content/week-02-docker-compose-debugging.md#weekly-mini-project--dockerized-app-stack)** in the Week 2 content guide). At minimum:
+
+- `Dockerfile` — multi-stage or slim base, runs as **non-root**
+- `.dockerignore` — no secrets/caches baked into the image
+- `compose.yaml` — app + database (+ optional Redis), wired by service name
+- `README.md` — exact `docker compose up` instructions + screenshots
+
+Full required behavior, the file list, and the **grading rubric (50 pts)** live in the [Weekly Mini-Project section of the Week 2 guide](../../content/week-02-docker-compose-debugging.md#weekly-mini-project--dockerized-app-stack). Read it before you start — this file is only about *how to hand it in*.
+
+---
+
+## 2. Submission checklist (do these before opening the form)
+
+- [ ] Project repo is **public** on GitHub
+- [ ] `docker compose up --build` starts the whole stack cleanly from scratch
+- [ ] App reachable on a documented `localhost` port
+- [ ] Services talk to each other **by service name** (not `localhost` / hardcoded IPs)
+- [ ] Database data persists in a **named volume** across `docker compose down` + `up`
+- [ ] All config comes from **environment variables** (no secrets in the image)
+- [ ] A working **healthcheck** on the app or database
+- [ ] App process runs as **non-root**; logs go to **stdout/stderr**
+- [ ] `.dockerignore` committed; `.env` **not** committed (check `.gitignore`)
+- [ ] `trufflehog git file://. --only-verified` → **clean** (no verified secrets in history)
+- [ ] `README.md` includes a 1-line "How to run" and a screenshot of the running stack
+- [ ] Latest work is **pushed to GitHub** (the portal reads your repo's current commit)
+
+---
+
+## 3. How to submit (on the contest portal)
+
+Week 2 mini-projects are submitted **directly on the contest portal** — there is no separate form. You paste your public repo URL and the portal verifies it and records the commit.
+
+> **Prerequisite:** you've already forked this repo per the root README's **[How to Participate](../../README.md#-how-to-participate-read-this-once-then-refer-back)** section. Your Dockerized App Stack lives in **its own separate public GitHub repo** — *not* inside this fork.
+
+### Step-by-step
+
+```bash
+# 1. Build your stack in its own dedicated PUBLIC repo, e.g.:
+#    github.com/<your-github-username>/dockerized-app-week02
+
+# 2. Commit and PUSH your latest work to GitHub:
+cd ~/path/to/dockerized-app-week02
+git add -A && git commit -m "week-02 submission" && git push
+```
+
+3. Go to the **contest portal** → **Mini-project submission**:
+   **[csot-devops.devclub.in/submission](https://csot-devops.devclub.in/submission)** (sign in with your DevClub login, same as the contest).
+4. Select **Week 2**, then fill the two fields and click **Submit**:
+
+| Field | Example | Notes |
+|---|---|---|
+| **GitHub repository URL** | `https://github.com/janedoe/dockerized-app-week02` | Must be **public**. The portal checks it's reachable. |
+| **Assignment folder** | `.` | Use `.` if the project is at the repo root; otherwise the subfolder path. |
+
+The portal automatically picks up your repo's **latest commit** on submit and shows it back to you (with a warning if you later push newer commits — just resubmit to update). A mentor reviews afterwards and your score appears on the leaderboard.
+
+### Important rules
+
+- You may **resubmit** any time before the deadline — the latest submission is the one graded. Push your fix, then hit **Update submission** on the portal so it captures the new commit.
+- **Keep the repo public** between submission and grading — a private repo can't be reviewed and forfeits your points.
+- **Don't force-push / rewrite history** after submitting — the recorded commit must still exist in your repo's history.
+
+---
+
+---
+
+## 4. Where things live (quick map)
+
+```text
+csot-devops/                                       ← upstream (this repo) — read-only for you
+├── content/week-02-docker-compose-debugging.md    ← teaching material + project spec + rubric
+├── submission/
+│   ├── README.md                                  ← CONTEST submission guide (csot CLI)
+│   └── week-02/                                   ← your contest task files (in YOUR fork)
+└── projects/
+    ├── README.md                                  ← index of all weekly project guides
+    └── week-02/
+        └── README.md                              ← (you are here) mini-project submission guide
+
+github.com/<you>/dockerized-app-week02/            ← YOUR project repo (separate, public)
+                                                   ← URL goes into the portal's Mini-project submission page
+```
+
+---
+
+## 5. FAQ
+
+**Q. Where do I submit?**
+On the contest portal: **[csot-devops.devclub.in/submission](https://csot-devops.devclub.in/submission)** → pick Week 2 → paste your public repo URL. Sign in with the same DevClub login you use for the contest. There is no separate Google form.
+
+**Q. Can my project just live inside my fork of this repo (in `projects/week-02/`)?**
+Technically yes, but it's a bad portfolio piece. Create a **dedicated public repo** for the stack and submit *that* URL. Your fork is the workspace; the dedicated repo is the deliverable.
+
+**Q. Can I submit the contest tasks on the same page?**
+No. Contest tasks go through the `csot` CLI / `csot challenge` — see [`/submission/README.md`](../../submission/README.md). They are graded automatically and separately.
+
+**Q. Can I pick an Alternative Mini-Project instead?**
+Yes — see [Alternative Mini-Project Ideas](../../content/week-02-docker-compose-debugging.md#alternative-mini-project-ideas) in the Week 2 guide. Note which one you picked in the form's *"Project chosen"* field; the same 50-point rubric applies (criteria mapped sensibly to your chosen project).
+
+**Q. I submitted, then noticed a bug. Can I fix it?**
+Yes — push the fix to your project repo, then hit **Update submission** on the [portal](https://csot-devops.devclub.in/submission) so it captures the new commit. The latest submission before the deadline is the one graded.
